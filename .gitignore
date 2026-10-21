@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 训练产物（权重与断点，体积大，从 Hugging Face 下载）
+out/*.pth
+out/*.7z
+checkpoints/
+
+# 训练数据（从 Hugging Face 下载）
+dataset/*.jsonl
+dataset/*.7z
+
+# 编辑器
+.vscode/
+.idea/
