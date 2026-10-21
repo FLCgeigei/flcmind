@@ -1,6 +1,6 @@
 # FLCMind
 
-中文 | [English](README.en.md)
+[English](README.md) | 中文
 
 一个用于**学习**的最小可运行大语言模型项目，完整覆盖 **预训练 → SFT 微调 → 部署推理** 全链路。
 

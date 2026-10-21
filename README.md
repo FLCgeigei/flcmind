@@ -1,6 +1,6 @@
 # FLCMind
 
-[中文](README.md) | English
+English | [中文](README.zh.md)
 
 A minimal, runnable large language model project built **for learning**, covering the full pipeline: **pretraining → SFT fine-tuning → deployment**.
 
