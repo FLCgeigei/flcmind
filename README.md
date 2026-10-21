@@ -1,166 +1,166 @@
 # FLCMind
 
-中文 | [English](README.en.md)
+[中文](README.md) | English
 
-一个用于**学习**的最小可运行大语言模型项目，完整覆盖 **预训练 → SFT 微调 → 部署推理** 全链路。
+A minimal, runnable large language model project built **for learning**, covering the full pipeline: **pretraining → SFT fine-tuning → deployment**.
 
-- 从零实现的类 Llama 结构（RMSNorm / RoPE / GQA / SwiGLU），并支持 **MoE 混合专家**架构。
-- 分词器、训练数据、训练好的权重均已就绪，照着下面的步骤即可一步步跑通。
-- 部署提供 **OpenAI 兼容 API**，可直接用 `openai` 客户端调用。
+- A Llama-style architecture implemented from scratch (RMSNorm / RoPE / GQA / SwiGLU), with optional **MoE (Mixture of Experts)** support.
+- The tokenizer, training data and trained weights are all ready — follow the steps below to run the whole pipeline.
+- Deployment ships an **OpenAI-compatible API**, callable directly with the `openai` client.
 
 ---
 
-## 目录结构
+## Project structure
 
 ```
 flcmind/
-├── model/                        # 模型定义与分词器
-│   ├── model_flcmind.py          #   FLCMind 模型结构（Config / ForCausalLM）
-│   ├── tokenizer.json            #   分词器（词表 6400）
+├── model/                        # Model definition and tokenizer
+│   ├── model_flcmind.py          #   FLCMind architecture (Config / ForCausalLM)
+│   ├── tokenizer.json            #   Tokenizer (vocab 6400)
 │   └── tokenizer_config.json
-├── dataset/                      # 数据加载器与训练数据（数据需从 HF 下载，见下文）
+├── dataset/                      # Data loaders and training data (download data from HF, see below)
 │   ├── lm_dataset.py             #   PretrainDataset / SFTDataset
-│   ├── pretrain_t2t_mini.jsonl   #   预训练数据（~1.2GB，解压自 pretrain_t2t_mini.7z）
-│   └── sft_t2t_mini.jsonl        #   SFT 对话数据（~1.7GB，解压自 sft_t2t_mini.7z）
-├── trainer/                      # 训练脚本
-│   ├── train_pretrain.py         #   预训练
-│   ├── train_full_sft.py         #   全参数 SFT 微调
-│   └── trainer_utils.py          #   公共工具（模型初始化、checkpoint 等）
+│   ├── pretrain_t2t_mini.jsonl   #   Pretraining data (~1.2GB, extracted from pretrain_t2t_mini.7z)
+│   └── sft_t2t_mini.jsonl        #   SFT dialogue data (~1.7GB, extracted from sft_t2t_mini.7z)
+├── trainer/                      # Training scripts
+│   ├── train_pretrain.py         #   Pretraining
+│   ├── train_full_sft.py         #   Full-parameter SFT
+│   └── trainer_utils.py          #   Shared utilities (model init, checkpoints, etc.)
 ├── scripts/
-│   └── serve_openai_api.py       # OpenAI 兼容 API 服务
-├── out/                          # 训练好的模型权重（需从 HF 下载，见下文）
-│   ├── full_sft_768.pth          #   Dense SFT 权重（对话能力）★推荐部署
-│   └── moe_sft_768_moe.pth       #   MoE SFT 权重（对话能力）
-├── checkpoints/                  # 断点续训文件存放处
-├── eval_llm.py                   # 命令行推理测试
-└── requirements.txt              # 依赖清单
+│   └── serve_openai_api.py       # OpenAI-compatible API server
+├── out/                          # Trained weights (download from HF, see below)
+│   ├── full_sft_768.pth          #   Dense SFT weights (chat) ★ recommended for deployment
+│   └── moe_sft_768_moe.pth       #   MoE SFT weights (chat)
+├── checkpoints/                  # Resume-training checkpoints
+├── eval_llm.py                   # Command-line inference
+└── requirements.txt              # Dependencies
 ```
 
 ---
 
-## 环境准备
+## Setup
 
 ```bash
 pip install -r requirements.txt
-# 另需自行安装与 CUDA 匹配的 torch（requirements 中未固定版本）：
+# Also install the torch build matching your CUDA version (not pinned in requirements):
 # pip install torch==2.6.0
 ```
 
-需要一张 CUDA GPU（≥6GB 显存）；仅推理时可用 `--device cpu`，但会慢很多。
+A CUDA GPU (≥6GB VRAM) is required. For inference only you can pass `--device cpu`, but it is much slower.
 
 ---
 
-## 获取数据与权重（Hugging Face）
+## Getting data and weights (Hugging Face)
 
-训练数据与训练好的权重已发布到 Hugging Face，本地仓库不包含这些大文件，首次运行前先下载。
+Training data and trained weights are published on Hugging Face. This repository does not include these large files — download them before the first run.
 
-- 数据集：https://huggingface.co/datasets/FLCgeigeigei/flcmind-datasets
-- 模型权重：https://huggingface.co/FLCgeigeigei/flcmind
+- Dataset: https://huggingface.co/datasets/FLCgeigeigei/flcmind-datasets
+- Model weights: https://huggingface.co/FLCgeigeigei/flcmind
 
 ```bash
 pip install -U huggingface_hub
 
-# 1) 数据集：下载压缩包 → 解压到 dataset/
+# 1) Dataset: download archives → extract into dataset/
 hf download FLCgeigeigei/flcmind-datasets --repo-type dataset --local-dir dataset
 7z x dataset/pretrain_t2t_mini.7z -odataset
 7z x dataset/sft_t2t_mini.7z -odataset
 
-# 2) 模型权重：下载 → 放入 out/
+# 2) Model weights: download → put into out/
 hf download FLCgeigeigei/flcmind --repo-type model --local-dir hf_model
 cp hf_model/full_sft_768.pth hf_model/moe_sft_768_moe.pth out/
 ```
 
-- **只想跳过训练直接对话**：只需执行第 2 步。
-- 模型仓库还附带 `model_flcmind.py` 和 `tokenizer*.json`，与项目 `model/` 下的文件相同，无需覆盖。
-- 解压需要安装 [7-Zip](https://www.7-zip.org/)；网络受限时可先设置代理，例如 `set HTTPS_PROXY=http://127.0.0.1:7890`（PowerShell 用 `$env:HTTPS_PROXY="http://127.0.0.1:7890"`）。
+- **Just want to chat without training**: only step 2 is needed.
+- The model repo also ships `model_flcmind.py` and `tokenizer*.json`, identical to the files under `model/` — no need to overwrite.
+- Extraction requires [7-Zip](https://www.7-zip.org/). If your network is restricted, set a proxy first, e.g. `set HTTPS_PROXY=http://127.0.0.1:7890` (PowerShell: `$env:HTTPS_PROXY="http://127.0.0.1:7890"`).
 
 ---
 
-## ⚠️ 重要约定：脚本用相对路径，必须在其所在目录运行
+## ⚠️ Important: scripts use relative paths — run them from their own directory
 
-所有脚本都以「自己所在的目录」为工作目录，用 `../` 访问同级的 `model/`、`out/`、`dataset/`。
-**因此训练前要先 `cd trainer`，部署前要先 `cd scripts`**，否则会报找不到 `../model` 的错误。
-（`eval_llm.py` 在项目根目录运行。）
+Every script treats its own directory as the working directory and reaches sibling `model/`, `out/` and `dataset/` via `../`.
+**So `cd trainer` before training and `cd scripts` before deployment**, otherwise you will get a "cannot find ../model" error.
+(`eval_llm.py` is run from the project root.)
 
 ---
 
-## 快速体验（用下载的权重）
+## Quick start (with downloaded weights)
 
-按上文「获取数据与权重」把 SFT 权重下载到 `out/` 后，可跳过训练直接对话：
+After downloading the SFT weights into `out/` as described above, you can skip training and chat directly:
 
 ```bash
 cd scripts
-python serve_openai_api.py --weight full_sft     # 启动 OpenAI 兼容服务
+python serve_openai_api.py --weight full_sft     # start the OpenAI-compatible server
 ```
 
-或不起服务，直接命令行对话：
+Or skip the server and chat from the command line:
 
 ```bash
-python eval_llm.py --weight full_sft             # 在项目根目录运行
+python eval_llm.py --weight full_sft             # run from the project root
 ```
 
-> 想体验 **MoE 版**：`python serve_openai_api.py --use_moe 1 --weight moe_sft`（需先下载 `out/moe_sft_768_moe.pth`，详见下方「MoE 架构」）。
+> To try the **MoE variant**: `python serve_openai_api.py --use_moe 1 --weight moe_sft` (download `out/moe_sft_768_moe.pth` first — see "MoE architecture" below).
 
 ---
 
-## 一、预训练
+## 1. Pretraining
 
-让模型学会「续写」，具备基础语言能力。
+Teaches the model to "continue text" and gives it basic language ability.
 
 ```bash
 cd trainer
-python train_pretrain.py                          # 用默认数据，输出 ../out/pretrain_768.pth
+python train_pretrain.py                          # default data, writes ../out/pretrain_768.pth
 ```
 
-- 数据默认读 `../dataset/pretrain_t2t_mini.jsonl`
-- 权重前缀用 `--save_weight` 指定，例如 `--save_weight mymodel` → 生成 `out/mymodel_768.pth`
-- 断点续训：`python train_pretrain.py --from_resume 1`
+- Data defaults to `../dataset/pretrain_t2t_mini.jsonl`
+- The weight prefix is set via `--save_weight`, e.g. `--save_weight mymodel` → `out/mymodel_768.pth`
+- Resume training: `python train_pretrain.py --from_resume 1`
 
-> 预训练权重是**中间产物**，SFT 完成后即可删除（`out/` 只保留最终部署用的 SFT 权重）。
+> Pretraining weights are an **intermediate artifact** and can be deleted once SFT is done (`out/` should only keep the final SFT weights used for deployment).
 
-## 二、SFT 微调
+## 2. SFT fine-tuning
 
-在预训练权重基础上继续训练，让模型学会「对话」。
+Continues from the pretrained weights so the model learns to hold a conversation.
 
 ```bash
 cd trainer
 python train_full_sft.py --from_weight pretrain --save_weight full_sft
 ```
 
-- 基于预训练权重 `pretrain_768.pth` 继续训练
-- 数据默认读 `../dataset/sft_t2t_mini.jsonl`
-- 输出 `../out/full_sft_768.pth`
+- Continues from the pretrained weights `pretrain_768.pth`
+- Data defaults to `../dataset/sft_t2t_mini.jsonl`
+- Writes `../out/full_sft_768.pth`
 
-> 已下载 `out/full_sft_768.pth` 时，可跳过此步。
+> If you already downloaded `out/full_sft_768.pth`, you can skip this step.
 
-## 三、部署推理
+## 3. Deployment and inference
 
 ```bash
 cd scripts
-python serve_openai_api.py --weight full_sft      # 部署对话模型（推荐）
-# 无 GPU 时加 --device cpu
+python serve_openai_api.py --weight full_sft      # deploy the chat model (recommended)
+# add --device cpu if you have no GPU
 ```
 
-服务启动在 `http://0.0.0.0:8998`，提供 OpenAI 兼容接口。
+The server listens on `http://0.0.0.0:8998` and exposes an OpenAI-compatible API.
 
-### 调用测试
+### Test the API
 
-curl：
+curl:
 
 ```bash
 curl http://localhost:8998/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"flcmind-local:latest","messages":[{"role":"user","content":"你好"}],"temperature":0.7}'
+  -d '{"model":"flcmind-local:latest","messages":[{"role":"user","content":"Hello"}],"temperature":0.7}'
 ```
 
-Python 客户端（流式）：
+Python client (streaming):
 
 ```python
 from openai import OpenAI
 client = OpenAI(api_key="sk-any", base_url="http://localhost:8998/v1")
 resp = client.chat.completions.create(
     model="flcmind-local:latest",
-    messages=[{"role": "user", "content": "你好"}],
+    messages=[{"role": "user", "content": "Hello"}],
     temperature=0.7,
     stream=True,
 )
@@ -168,7 +168,7 @@ for chunk in resp:
     print(chunk.choices[0].delta.content or "", end="")
 ```
 
-### 命令行推理（不起服务）
+### Command-line inference (no server)
 
 ```bash
 python eval_llm.py --weight full_sft
@@ -176,70 +176,70 @@ python eval_llm.py --weight full_sft
 
 ---
 
-## MoE 架构（可选）
+## MoE architecture (optional)
 
-除默认的稠密（Dense）模型外，本项目还支持 **MoE（Mixture of Experts，混合专家）**：把每层的前馈网络（FFN）替换成多个「专家」，由门控网络（gate）为每个 token 动态挑选 Top-K 个专家参与计算。
+Besides the default dense model, this project also supports **MoE (Mixture of Experts)**: each layer's feed-forward network (FFN) is replaced by several "experts", and a gate network dynamically picks the Top-K experts for each token.
 
-**核心思想**：用「稀疏激活」把**参数量**和**计算量**解耦——每个 token 只走 1 个专家（Top-1），所以在推理算力基本不变的前提下大幅扩大模型容量。
+**Core idea**: "sparse activation" decouples **parameter count** from **compute** — each token goes through only 1 expert (Top-1), so model capacity grows a lot while inference cost stays essentially unchanged.
 
-| | 稠密 Dense | MoE（4 专家 Top-1） |
+| | Dense | MoE (4 experts, Top-1) |
 |---|---|---|
-| 总参数（占显存/体积） | ~65M（`~131MB`） | ~200M（`~400MB`） |
-| 激活参数（每 token 实际计算） | ~65M | **~65M**（非 FFN 全激活 + 只算 1 个专家） |
-| 单 token 算力 | 1× | ≈1×（几乎相同） |
+| Total parameters (VRAM/size) | ~65M (`~131MB`) | ~200M (`~400MB`) |
+| Active parameters (per token) | ~65M | **~65M** (non-FFN fully active + only 1 expert) |
+| Compute per token | 1× | ≈1× (almost identical) |
 
-> 一句话：MoE 拿「更大的显存/存储」换「更大的模型容量」，而单 token 计算量几乎不变。因此它对标的是**同等参数量的大 Dense 模型**（算力省数倍），而不是单个小 Dense。数据越大、推理越频繁，越划算；本项目属小模型 + 小数据，开 MoE 主要用于**学习原理**。
+> In one sentence: MoE trades "more VRAM/storage" for "more model capacity" while per-token compute barely changes. It therefore competes with **dense models of the same parameter count** (several times cheaper in compute), not with a single small dense model. The more data and the more frequent the inference, the better the payoff; for this project (small model + small data), MoE is mainly for **learning how it works**.
 
-### 启用方式
+### Enabling it
 
-所有脚本统一用 `--use_moe 1` 开启（默认 `0` 为稠密模型）。开启后权重文件名会**自动带 `_moe` 后缀**（如 `pretrain_768_moe.pth`），用于区分两类权重。
+All scripts use `--use_moe 1` (default `0` = dense). When enabled, weight filenames automatically get a **`_moe` suffix** (e.g. `pretrain_768_moe.pth`) to distinguish the two kinds of weights.
 
-> ⚠️ **训练、SFT、部署、推理必须全程带上一致的 `--use_moe` 值**，否则会因权重形状不匹配而加载失败。
+> ⚠️ **Training, SFT, deployment and inference must all use the same `--use_moe` value**, otherwise loading fails due to shape mismatches.
 
-> ✅ 已下载 `out/moe_sft_768_moe.pth`（对话）时，可直接跳到下方第 3 步部署：`python serve_openai_api.py --use_moe 1 --weight moe_sft`。
+> ✅ If you already downloaded `out/moe_sft_768_moe.pth` (chat), jump straight to step 3 below: `python serve_openai_api.py --use_moe 1 --weight moe_sft`.
 
 ```bash
-# 1. 预训练（MoE）
+# 1. Pretraining (MoE)
 cd trainer
 python train_pretrain.py --use_moe 1 --save_weight pretrain
 #   → ../out/pretrain_768_moe.pth
 
-# 2. SFT（MoE）—— --from_weight 传预训练权重的前缀
+# 2. SFT (MoE) — --from_weight takes the pretraining prefix
 python train_full_sft.py --use_moe 1 --from_weight pretrain --save_weight full_sft
 #   → ../out/full_sft_768_moe.pth
 
-# 3. 部署（MoE）
+# 3. Deployment (MoE)
 cd ../scripts
 python serve_openai_api.py --use_moe 1 --weight full_sft
 
-# 4. 命令行推理（MoE）
+# 4. Command-line inference (MoE)
 python eval_llm.py --use_moe 1 --weight full_sft
 ```
 
-> 权重前缀跟着 `--save_weight` 走。例如 `--save_weight moe_model` 会生成 `moe_model_768_moe.pth`，后续步骤的 `--from_weight` / `--weight` 都要用这个前缀 `moe_model`。
+> The weight prefix follows `--save_weight`. For example `--save_weight moe_model` produces `moe_model_768_moe.pth`, and later `--from_weight` / `--weight` must use that same prefix `moe_model`.
 
-**完整示例（前缀自定义，三步前后必须对齐）：**
+**Complete example (custom prefixes, must line up across all three steps):**
 
 ```bash
-# ① 预训练：起个前缀 moe_model
+# 1) Pretraining: choose prefix moe_model
 cd trainer
 python train_pretrain.py --use_moe 1 --save_weight moe_model
 #   → ../out/moe_model_768_moe.pth
 
-# ② SFT：--from_weight 用①的前缀，--save_weight 换个新前缀 moe_sft
+# 2) SFT: --from_weight uses the prefix from 1), --save_weight picks a new prefix moe_sft
 python train_full_sft.py --use_moe 1 --from_weight moe_model --save_weight moe_sft
 #   → ../out/moe_sft_768_moe.pth
 
-# ③ 部署：--weight 用②的前缀 moe_sft
+# 3) Deployment: --weight uses the prefix from 2) moe_sft
 cd ../scripts
 python serve_openai_api.py --use_moe 1 --weight moe_sft
 ```
 
-> ⚠️ SFT 的 `--save_weight` **别填成预训练的前缀**，否则会覆盖掉预训练权重（同名）。三步的前缀关系是：预训练产出 → SFT 读入并产出新前缀 → 部署读 SFT 的前缀。
+> ⚠️ Do **not** set SFT's `--save_weight` to the pretraining prefix, or you will overwrite the pretrained weights (same filename). The relationship is: pretraining produces → SFT reads it and produces a new prefix → deployment reads the SFT prefix.
 
-### 多卡训练（DDP）
+### Multi-GPU training (DDP)
 
-训练脚本支持 `torchrun` 多卡数据并行（部署/推理无需，单卡即可）：
+The training scripts support `torchrun` data parallelism (deployment/inference does not need it — a single GPU is fine):
 
 ```bash
 cd trainer
@@ -247,57 +247,57 @@ torchrun --nproc_per_node=2 train_pretrain.py --use_moe 1 --save_weight pretrain
 torchrun --nproc_per_node=2 train_full_sft.py --use_moe 1 --from_weight pretrain --save_weight full_sft
 ```
 
-- `--nproc_per_node` = 使用的卡数；指定用哪几张卡：前面加 `CUDA_VISIBLE_DEVICES=0,1`。
-- **`--batch_size` 是「每张卡」的值，不用改**。但有效批量会随卡数放大：
-  `有效批量 = batch_size × 卡数 × accumulation_steps`（默认 `32 × 卡数 × 8`）。
-  想保持与单卡完全一致的训练行为，把 `--accumulation_steps` 按卡数等比减小即可。
-- ⚠️ **Windows 不支持 NCCL**（脚本默认 `backend="nccl"`）。Windows 上多卡易失败，建议单卡训练。
+- `--nproc_per_node` = number of GPUs; to pick specific GPUs, prefix `CUDA_VISIBLE_DEVICES=0,1`.
+- **`--batch_size` is "per GPU" and should not be changed**. But the effective batch scales with GPU count:
+  `effective batch = batch_size × num_gpus × accumulation_steps` (default `32 × num_gpus × 8`).
+  To keep behavior identical to single-GPU, reduce `--accumulation_steps` proportionally.
+- ⚠️ **Windows does not support NCCL** (the scripts default to `backend="nccl"`). Multi-GPU on Windows often fails; single-GPU training is recommended.
 
-### 相关配置
+### Configuration
 
-MoE 超参数在 `model/model_flcmind.py` 的 `FLCMindConfig` 中定义（`use_moe=False` 时全部忽略）：
+MoE hyperparameters live in `FLCMindConfig` in `model/model_flcmind.py` (all ignored when `use_moe=False`):
 
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `num_experts` | 4 | 专家总数（越多总参数/容量越大） |
-| `num_experts_per_tok` | 1 | 每个 token 激活的专家数（Top-K）；调成 2 则激活参数与算力翻倍 |
-| `moe_intermediate_size` | 同 `intermediate_size` | 单个专家 FFN 的中间层维度 |
-| `norm_topk_prob` | True | 是否对 Top-K 门控权重归一化 |
-| `router_aux_loss_coef` | 5e-4 | 负载均衡辅助损失系数（防止专家旱涝不均） |
+| Option | Default | Description |
+|--------|---------|-------------|
+| `num_experts` | 4 | Total number of experts (more = more parameters/capacity) |
+| `num_experts_per_tok` | 1 | Experts activated per token (Top-K); setting 2 doubles active params and compute |
+| `moe_intermediate_size` | same as `intermediate_size` | Intermediate size of a single expert FFN |
+| `norm_topk_prob` | True | Whether to normalize the Top-K gate weights |
+| `router_aux_loss_coef` | 5e-4 | Load-balancing auxiliary loss coefficient (prevents uneven expert usage) |
 
-> 训练日志会分开打印 `logits_loss`（语言建模损失）和 `aux_loss`（负载均衡损失），二者相加为总损失。
-
----
-
-## 常见坑
-
-| 现象 | 原因 | 解决 |
-|------|------|------|
-| `HFValidationError: ... '../model'` | 没在脚本所在目录运行 | 先 `cd trainer` 或 `cd scripts` |
-| `CUDA error: device-side assert` | 请求里 `temperature=0.0`，服务端强制采样导致除零 | 客户端把 temperature 设为正数（如 0.7），并**重启服务**清掉污染的 CUDA 上下文 |
-| 回复是乱码 / 胡乱续写 | 用了 `pretrain` 预训练权重 | 部署改用 `--weight full_sft` |
-| 加载权重形状不匹配 | 启动参数与训练时不一致 | `--hidden_size` / `--num_hidden_layers` / `--use_moe` 必须与训练时相同（默认 768 / 8 / 关） |
-| MoE 权重加载失败 / 找不到权重 | 忘了带 `--use_moe 1`，或 `--weight` 前缀写错 | 全程保持 `--use_moe` 一致；`--weight` 传的是**前缀**，脚本自动拼 `_768_moe.pth` |
-| `torchrun` 报错 / 指向 `.../elastic/errors.html` | Windows 不支持 NCCL（脚本默认 `backend="nccl"`） | Windows 上改用**单卡** `python ...`；多卡需 Linux 环境 |
+> Training logs print `logits_loss` (language modeling loss) and `aux_loss` (load-balancing loss) separately; their sum is the total loss.
 
 ---
 
-## 完整流程一览（从零到 API）
+## Common pitfalls
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `HFValidationError: ... '../model'` | Not run from the script's directory | `cd trainer` or `cd scripts` first |
+| `CUDA error: device-side assert` | `temperature=0.0` in the request; forced sampling divides by zero | Set a positive temperature on the client (e.g. 0.7) and **restart the server** to clear the polluted CUDA context |
+| Garbled output / random continuations | Using the `pretrain` weights | Deploy with `--weight full_sft` |
+| Weight shape mismatch when loading | Launch flags differ from training | `--hidden_size` / `--num_hidden_layers` / `--use_moe` must match training (defaults: 768 / 8 / off) |
+| MoE weights fail to load / not found | Forgot `--use_moe 1`, or wrong `--weight` prefix | Keep `--use_moe` consistent; `--weight` takes a **prefix**, the script appends `_768_moe.pth` |
+| `torchrun` error pointing to `.../elastic/errors.html` | Windows lacks NCCL support (scripts default to `backend="nccl"`) | Use single-GPU `python ...` on Windows; multi-GPU needs Linux |
+
+---
+
+## Full pipeline at a glance (from scratch to API)
 
 ```bash
-# 1. 预训练
+# 1. Pretraining
 cd trainer
 python train_pretrain.py --save_weight mymodel
 
 # 2. SFT
 python train_full_sft.py --from_weight mymodel --save_weight mymodel_sft
 
-# 3. 部署
+# 3. Deployment
 cd ../scripts
 python serve_openai_api.py --weight mymodel_sft
 
-# 4. 测试
+# 4. Test
 curl http://localhost:8998/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"flcmind","messages":[{"role":"user","content":"你好"}],"temperature":0.7}'
+  -d '{"model":"flcmind","messages":[{"role":"user","content":"Hello"}],"temperature":0.7}'
 ```
