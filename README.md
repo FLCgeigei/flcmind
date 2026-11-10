@@ -8,6 +8,8 @@ A minimal, runnable large language model project built **for learning**, coverin
 - The tokenizer, training data and trained weights are all ready — follow the steps below to run the whole pipeline.
 - Deployment ships an **OpenAI-compatible API**, callable directly with the `openai` client.
 
+![FLCMind architecture](flcmind-architecture/assets/flcmind-architecture.png)
+
 ---
 
 ## Project structure
@@ -32,6 +34,7 @@ flcmind/
 │   ├── full_sft_768.pth          #   Dense SFT weights (chat) ★ recommended for deployment
 │   └── moe_sft_768_moe.pth       #   MoE SFT weights (chat)
 ├── checkpoints/                  # Resume-training checkpoints
+├── flcmind-architecture/         # Architecture diagram
 ├── eval_llm.py                   # Command-line inference
 └── requirements.txt              # Dependencies
 ```
@@ -266,6 +269,43 @@ MoE hyperparameters live in `FLCMindConfig` in `model/model_flcmind.py` (all ign
 | `router_aux_loss_coef` | 5e-4 | Load-balancing auxiliary loss coefficient (prevents uneven expert usage) |
 
 > Training logs print `logits_loss` (language modeling loss) and `aux_loss` (load-balancing loss) separately; their sum is the total loss.
+
+---
+
+## Benchmarks
+
+All numbers below were measured on a single RTX 4090 in fp16, with **identical prompts and an identical scoring rule for every model** — the baselines were run under the same protocol, not copied from vendor cards.
+
+| Model | Params (total / active) | C-Eval 5-shot | CMMLU 5-shot | PPL↓ | Decode (tok/s) | VRAM (GB) |
+|---|---|---|---|---|---|---|
+| **FLCMind-Dense-SFT** | 63.9M | 26.3 ± 2.3 | 24.7 ± 2.3 | 170.8 | 161 | 0.2 |
+| **FLCMind-MoE-SFT** | 198.4M / 63.9M | 25.2 ± 2.3 | 23.8 ± 2.3 | **112.2** | 111 | 0.4 |
+| GPT2-Chinese-Distil-60M‡ | 59.5M | 23.0 ± 2.2 | 24.4 ± 2.3 | — | 398 | 0.2 |
+| GPT2-Chinese-102M‡ | 102.1M | 23.0 ± 2.2 | 24.4 ± 2.3 | — | 242 | 0.3 |
+| Wenzhong-GPT2-110M‡ | 124.5M | 27.9 ± 2.4 | 24.6 ± 2.3 | — | 218 | 0.4 |
+| SmolLM2-135M§ | 134.5M | 22.7 ± 2.2 | 25.0 ± 2.3 | — | 68 | 0.3 |
+| GPT-2 Medium§ | 354.8M | 27.0 ± 2.4 | 24.1 ± 2.3 | — | 125 | 0.9 |
+| SmolLM2-360M§ | 361.8M | 24.4 ± 2.3 | 23.8 ± 2.3 | — | 62 | 0.8 |
+| TinyLlama-1.1B§ | 1.10B | 24.3 ± 2.3 | 24.2 ± 2.3 | — | 87 | 2.1 |
+| SmolLM2-1.7B§ | 1.71B | 33.2 ± 2.5 | 32.8 ± 2.5 | — | 85 | 3.5 |
+
+> C-Eval: n = 1346 (full val), 5-shot, completion template. CMMLU: n = 1340 (test, 20 per subject). ± = half-width of the Wilson 95% CI. PPL is computed per token on C-Eval prompts and is only comparable between models sharing a tokenizer. § English-dominant model. ‡ `BertTokenizer`-based: cannot encode `A/B/C/D` as single tokens, so the score is a floor — GPT2-Chinese predicts one fixed letter 100% of the time, and its accuracy is just that letter's share of the gold answers.
+
+Four-way random guessing is 25.0%; every model in the 60–135M range lands in 22–28%, i.e. they are statistically indistinguishable.
+
+MoE pays off in language modelling rather than in answering: with the same active parameters PPL drops 34% (170.8 → 112.2) while C-Eval stays flat, and decode throughput falls from 161 to 111 tok/s.
+
+**Throughput** (one 128-token prompt replicated into a batch, 32 tokens decoded):
+
+| Model | Prefill tok/s (bs1 / bs32) | Decode tok/s (bs1 / bs32) |
+|---|---|---|
+| FLCMind-Dense-SFT | 20,477 / 548,127 | 163 / 4,910 |
+| FLCMind-MoE-SFT | 10,449 / 302,191 | 106 / 3,048 |
+| GPT2-Chinese-Distil-60M | 51,507 / 1,427,555 | 393 / 11,400 |
+
+A single request cannot saturate a 4090 — batching 32 requests raises decode throughput about 30×. FLCMind is ~2.5× slower than a same-size GPT-2 baseline because its attention is plain PyTorch rather than a fused SDPA kernel; that is an implementation gap, not a capability one.
+
+**MoE routing load** (first 64 C-Eval prompts): expert share 24.6 / 24.8 / 23.7 / 27.0% (ideal 25%), overall max/min load ratio 1.14 (per-layer 1.40–2.31), normalized routing entropy 0.96–0.995 — no expert collapse, though the high entropy also means experts are not strongly specialised.
 
 ---
 
